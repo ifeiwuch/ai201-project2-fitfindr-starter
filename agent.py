@@ -18,6 +18,8 @@ Usage (once implemented):
     print(result["error"])   # None on success
 """
 
+import re
+
 from tools import search_listings, suggest_outfit, create_fit_card
 
 
@@ -92,9 +94,55 @@ def run_agent(query: str, wardrobe: dict) -> dict:
     Before writing code, complete the Planning Loop and State Management sections
     of planning.md — your implementation should match what you described there.
     """
-    # TODO: implement the planning loop
+    # Step 1: Initialize session
     session = _new_session(query, wardrobe)
-    session["error"] = "Planning loop not yet implemented."
+
+    # Step 2: Parse query with regex (documented in planning.md).
+    # Extract max_price: "under $30", "max $25", "less than $40", etc.
+    price_match = re.search(
+        r'(?:under|max|less than|below|up to)\s*\$?\s*(\d+(?:\.\d+)?)',
+        query,
+        re.IGNORECASE,
+    )
+    max_price = float(price_match.group(1)) if price_match else None
+
+    # Extract size: "size M", or standalone tokens like XS/S/M/L/XL/XXL/S/M etc.
+    size_match = re.search(r'\bsize\s+([a-zA-Z0-9/]+)\b', query, re.IGNORECASE)
+    if not size_match:
+        size_match = re.search(r'\b(xxs|xxl|xl|xs|s/m|m/l|s|m|l)\b', query, re.IGNORECASE)
+    size = size_match.group(1).upper() if size_match else None
+
+    # Description: strip price and size phrases, collapse whitespace
+    description = re.sub(
+        r'(?:under|max|less than|below|up to)\s*\$?\s*\d+(?:\.\d+)?', '', query, flags=re.IGNORECASE
+    )
+    description = re.sub(r'\bsize\s+[a-zA-Z0-9/]+\b', '', description, flags=re.IGNORECASE)
+    description = re.sub(r'\b(xxs|xxl|xl|xs|s/m|m/l|s|m|l)\b', '', description, flags=re.IGNORECASE)
+    description = re.sub(r'[,\s]+', ' ', description).strip()
+
+    session["parsed"] = {"description": description, "size": size, "max_price": max_price}
+
+    # Step 3: Call search_listings; early-return if no results
+    results = search_listings(description, size=size, max_price=max_price)
+    session["search_results"] = results
+
+    if not results:
+        session["error"] = (
+            "No listings found for that description/size/price. "
+            "Try loosening the price or size filter."
+        )
+        return session
+
+    # Step 4: Select top result
+    session["selected_item"] = results[0]
+
+    # Step 5: Call suggest_outfit
+    session["outfit_suggestion"] = suggest_outfit(session["selected_item"], wardrobe)
+
+    # Step 6: Call create_fit_card
+    session["fit_card"] = create_fit_card(session["outfit_suggestion"], session["selected_item"])
+
+    # Step 7: Return session
     return session
 
 

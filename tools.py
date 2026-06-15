@@ -69,8 +69,32 @@ def search_listings(
 
     Before writing code, fill in the Tool 1 section of planning.md.
     """
-    # Replace this with your implementation
-    return []
+    listings = load_listings()
+
+    # Filter by price and size
+    if max_price is not None:
+        listings = [l for l in listings if l["price"] <= max_price]
+    if size is not None:
+        size_lower = size.lower()
+        listings = [l for l in listings if size_lower in l["size"].lower()]
+
+    # Score by keyword overlap against title, description, category, style_tags, brand
+    keywords = description.lower().split()
+
+    def score(listing):
+        searchable = " ".join([
+            listing["title"],
+            listing["description"],
+            listing["category"],
+            " ".join(listing["style_tags"]),
+            listing["brand"] or "",
+        ]).lower()
+        return sum(1 for kw in keywords if kw in searchable)
+
+    scored = [(score(l), l) for l in listings]
+    scored = [(s, l) for s, l in scored if s > 0]
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [l for _, l in scored]
 
 
 # ── Tool 2: suggest_outfit ────────────────────────────────────────────────────
@@ -100,8 +124,42 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
     Before writing code, fill in the Tool 2 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    client = _get_groq_client()
+    items = wardrobe.get("items", [])
+
+    item_summary = (
+        f"{new_item['title']} — {new_item['category']}, "
+        f"{', '.join(new_item['colors'])}, "
+        f"style: {', '.join(new_item['style_tags'])}, "
+        f"${new_item['price']}"
+    )
+
+    if not items:
+        prompt = (
+            f"I'm considering buying this thrifted item: {item_summary}.\n"
+            "My wardrobe is currently empty. Give me general styling advice for this piece — "
+            "what kinds of items pair well with it, what vibe or aesthetic it suits, and "
+            "1–2 example outfit ideas using common wardrobe staples. Be specific and concise."
+        )
+    else:
+        wardrobe_lines = "\n".join(
+            f"- {item['name']} ({item['category']}, {', '.join(item['colors'])})"
+            + (f" — {item['notes']}" if item.get("notes") else "")
+            for item in items
+        )
+        prompt = (
+            f"I'm considering buying this thrifted item: {item_summary}.\n\n"
+            f"Here is my current wardrobe:\n{wardrobe_lines}\n\n"
+            "Suggest 1–2 complete outfits that pair the new item with specific pieces from my wardrobe. "
+            "Name the wardrobe pieces you're using. Be specific about the vibe and how to wear it. Keep it concise."
+        )
+
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7,
+    )
+    return response.choices[0].message.content
 
 
 # ── Tool 3: create_fit_card ───────────────────────────────────────────────────
@@ -133,5 +191,30 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
 
     Before writing code, fill in the Tool 3 section of planning.md.
     """
-    # Replace this with your implementation
-    return ""
+    if not outfit or not outfit.strip():
+        return "Could not generate a fit card: outfit suggestion is missing or empty."
+
+    if not new_item:
+        return "Could not generate a fit card: new_item is missing."
+
+    client = _get_groq_client()
+
+    prompt = (
+        f"Write a 2–4 sentence Instagram/TikTok caption for this thrifted outfit.\n\n"
+        f"Thrifted item: {new_item['title']} — found on {new_item['platform']} for ${new_item['price']}\n"
+        f"Outfit: {outfit}\n\n"
+        "Rules:\n"
+        "- Sound casual and authentic, like a real OOTD post — not a product description\n"
+        "- Mention the item name, price, and platform naturally, once each\n"
+        "- Be specific about the vibe (e.g. 90s grunge, cottagecore, streetwear)\n"
+        "- Keep it to 2–4 sentences only\n"
+        "- No hashtags, no emojis unless they feel natural\n"
+        "Return only the caption text, nothing else."
+    )
+
+    response = client.chat.completions.create(
+        model="llama-3.1-8b-instant",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.9,
+    )
+    return response.choices[0].message.content
